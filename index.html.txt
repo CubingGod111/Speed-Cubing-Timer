@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>SpeedCube Timer</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap');
+        .timer-font { font-family: 'JetBrains+Mono', monospace; }
+        .holding { color: #ef4444 !important; } 
+        .ready { color: #22c55e !important; }   
+        .inspecting { color: #ffffff !important; }
+        .face { display: grid; gap: 1px; background: #111; padding: 1px; border-radius: 2px; aspect-ratio: 1 / 1; }
+        .sticker { width: 100%; height: 100%; border-radius: 1px; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
+        .settings-btn-inline { cursor: pointer; transition: transform 0.2s; color: #71717a; }
+        .settings-btn-inline:hover { transform: rotate(45deg); color: white; }
+        .draggable { position: absolute; transition: opacity 0.3s; z-index: 10; }
+        .editing .draggable { outline: 2px dashed #3b82f6; z-index: 100; cursor: move; }
+        .resizer { display: none; position: absolute; background: #3b82f6; z-index: 110; }
+        .editing .resizer { display: block; }
+        .resizer-r { width: 4px; height: 100%; top: 0; right: -2px; cursor: ew-resize; }
+        .resizer-b { width: 100%; height: 4px; bottom: -2px; left: 0; cursor: ns-resize; }
+        .resizer-rb { width: 12px; height: 12px; bottom: -6px; right: -6px; cursor: nwse-resize; border-radius: 50%; }
+        #timer-container { min-width: 500px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 1rem; backdrop-filter: blur(4px); }
+        .range-slider { position: relative; width: 100%; height: 24px; }
+        .range-slider input { position: absolute; width: 100%; pointer-events: none; appearance: none; height: 6px; background: none; top: 50%; transform: translateY(-50%); }
+        .range-slider input::-webkit-slider-thumb { pointer-events: auto; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #3b82f6; cursor: pointer; border: 2px solid #18181b; }
+        @keyframes minimal-green-glow { 0% { color: #4ade80; text-shadow: 0 0 20px rgba(74, 222, 128, 0.6); transform: scale(1.1); } 100% { color: white; text-shadow: 0 0 0px transparent; transform: scale(1); } }
+        @keyframes minimal-slow-shake { 0%, 100% { transform: translateX(0); color: #f87171; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+        @keyframes minimal-mid-pulse { 0% { color: #60a5fa; opacity: 0.8; } 50% { color: #93c5fd; opacity: 1; } 100% { color: white; opacity: 1; } }
+        .animate-fast { animation: minimal-green-glow 0.8s ease-out; }
+        .animate-slow { animation: minimal-slow-shake 0.1s ease-in-out 4; }
+        .animate-mid { animation: minimal-mid-pulse 0.6s ease-in-out; }
+        #layout-done-btn { display: none; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; }
+        .editing #layout-done-btn { display: flex; }
+        
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            background-size: 0.8em;
+        }
+
+        #scramble {
+            transition: font-size 0.15s ease-out;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+    </style>
+</head>
+<body class="bg-zinc-900 text-white min-h-screen font-sans overflow-hidden select-none relative">
+
+    <button id="layout-done-btn" onclick="exitLayoutMode()" class="bg-green-600 hover:bg-green-500 text-white px-6 py-4 rounded-full shadow-2xl flex items-center justify-center gap-2 font-bold animate-bounce">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        Finish Layout
+    </button>
+
+    <div id="immersiveDetail" class="modal-backdrop hidden" onclick="closeImmersive()">
+        <div class="bg-zinc-800 border border-zinc-700 p-8 rounded-3xl max-w-2xl w-full shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="closeImmersive()" class="absolute top-6 right-6 text-zinc-500 hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                <div>
+                    <p id="immDate" class="text-zinc-500 text-[10px] uppercase tracking-widest mb-1 font-bold"></p>
+                    <h1 id="immTime" class="text-6xl font-bold timer-font text-blue-500 tabular-nums"></h1>
+                    <p id="immInsp" class="text-zinc-400 text-xs mt-1"></p>
+                    <div class="mt-6 p-4 bg-zinc-900/50 rounded-2xl border border-zinc-700">
+                        <p class="text-[9px] text-zinc-600 uppercase tracking-widest mb-2 font-bold">Scramble</p>
+                        <p id="immScramble" class="text-xs font-mono leading-relaxed text-zinc-400"></p>
+                    </div>
+                    <div class="mt-4">
+                        <p class="text-[9px] text-zinc-600 uppercase tracking-widest mb-2 font-bold">Solve Note</p>
+                        <textarea id="immNote" placeholder="Add a note..." class="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-xs text-zinc-400 outline-none focus:border-blue-500 h-20 resize-none" oninput="saveCurrentNote()"></textarea>
+                    </div>
+                </div>
+                <div id="immVisualizer" class="flex justify-center bg-zinc-900/30 p-4 rounded-2xl"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal-backdrop hidden" onclick="closeSettings()">
+        <div class="bg-zinc-800 border border-zinc-700 p-6 rounded-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <h3 class="text-lg font-bold mb-6 text-center tracking-tight">Settings</h3>
+            <div class="space-y-5 text-sm">
+                <button onclick="enterLayoutMode()" class="w-full bg-zinc-700 hover:bg-zinc-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                    Adjust Layout
+                </button>
+                
+                <div class="p-4 bg-zinc-900/50 rounded-xl border border-zinc-700 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-zinc-400 text-[10px] uppercase tracking-widest font-bold">Thresholds</span>
+                        <span id="skillStatus" class="text-[9px] px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full font-bold uppercase tracking-tighter">CALIBRATING</span>
+                    </div>
+                    <div class="range-slider">
+                        <div class="absolute h-1.5 bg-zinc-700 rounded-lg w-full top-1/2 -translate-y-1/2"></div>
+                        <input type="range" id="threshFast" min="0" max="30" step="0.5" oninput="validateThresholds()">
+                        <input type="range" id="threshSlow" min="0" max="30" step="0.5" oninput="validateThresholds()">
+                    </div>
+                    <div class="flex justify-between text-[10px] font-mono text-zinc-500">
+                        <span>Fast: <span id="valFast" class="text-green-400">0</span>s</span>
+                        <span>Slow: <span id="valSlow" class="text-red-400">0</span>s</span>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="flex flex-col gap-1">
+                        <span class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Preview Image Size</span>
+                        <input type="range" id="sizePreview" min="80" max="400" step="5" oninput="liveResize()" class="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <span class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Timer Size</span>
+                        <input type="range" id="sizeTimer" min="48" max="180" step="2" oninput="liveResize()" class="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <span class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Stats Font Size</span>
+                        <input type="range" id="sizeStats" min="8" max="24" step="1" oninput="liveResize()" class="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                    </div>
+                </div>
+
+                <div class="space-y-3 pt-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-zinc-300">Scramble Image</span>
+                        <input type="checkbox" id="settingPreview" onchange="liveResize()" checked class="w-4 h-4 rounded-full accent-blue-500 cursor-pointer">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-zinc-300">Inspection (15s)</span>
+                        <select id="settingInspectionMode" onchange="liveResize()" class="bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1 text-xs">
+                            <option value="off">Off</option>
+                            <option value="on" selected>On</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pt-4 space-y-2 border-t border-zinc-700">
+                    <button onclick="clearAllSolves()" class="w-full bg-red-900/20 hover:bg-red-900/40 text-red-400 py-2.5 rounded-xl text-xs font-bold transition-colors uppercase tracking-widest">Hard Reset Session</button>
+                    <button onclick="resetLayout()" class="text-[10px] text-zinc-500 hover:text-white uppercase tracking-widest w-full text-center font-bold">Default Layout</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="analyticsModal" class="modal-backdrop hidden" onclick="closeAnalytics()">
+        <div class="bg-zinc-800 border border-zinc-700 p-6 rounded-3xl max-w-5xl w-full max-h-[95vh] flex flex-col" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h3 class="text-lg font-bold tracking-tight">Session Analysis</h3>
+                    <p id="analyticsSubtitle" class="text-zinc-500 text-[9px] font-mono">Dynamic session breakdown</p>
+                </div>
+                <button onclick="closeAnalytics()" class="text-zinc-400 hover:text-white bg-zinc-700 p-2 rounded-full transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                <div class="lg:col-span-2 bg-zinc-900/50 p-4 rounded-2xl border border-zinc-700 h-[220px]">
+                    <h4 class="text-[8px] uppercase font-bold text-zinc-600 tracking-widest mb-2">Trend Line</h4>
+                    <div class="h-[160px]">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-700 h-[220px] flex flex-col items-center">
+                    <h4 class="text-[8px] uppercase font-bold text-zinc-600 tracking-widest mb-2 self-start">Time Distribution</h4>
+                    <div class="flex-grow w-full relative max-h-[140px]">
+                        <canvas id="distChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="modalSolveList" class="flex-grow overflow-y-auto bg-zinc-900/30 border border-zinc-700/50 rounded-2xl p-3 space-y-1.5">
+            </div>
+        </div>
+    </div>
+
+    <div id="comp-scramble" class="draggable p-4 w-full text-center" style="top: 20px; left: 0;">
+        <div id="scramble" class="font-bold max-w-4xl mx-auto leading-snug font-mono text-zinc-200">Generating...</div>
+    </div>
+    <div id="comp-preview" class="draggable" style="bottom: 20px; left: 20px;">
+        <div id="visualizerHost" class="flex items-center justify-center"></div>
+    </div>
+    <div id="comp-timer" class="draggable" style="top: 50%; left: 50%; transform: translate(-50%, -50%);">
+        <div id="timer-container">
+            <div id="timer" class="timer-font font-bold tabular-nums">0.000</div>
+            <p id="instruction" class="text-zinc-500 mt-4 text-[10px] uppercase tracking-[0.2em] font-bold">Space to Inspect</p>
+        </div>
+    </div>
+
+    <aside id="comp-stats" class="draggable bg-zinc-800/80 p-3 border border-zinc-700 rounded-2xl w-64 h-[480px]" style="bottom: 20px; right: 20px;">
+        <div class="flex flex-col h-full relative">
+            <div class="flex flex-col gap-2 mb-3 px-1">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-sm font-bold uppercase tracking-wider">Session</h2>
+                    <div class="settings-btn-inline" onclick="openSettings()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
+                </div>
+                <select id="eventSelector" onchange="changeEvent(this.value)" class="bg-zinc-900 border border-zinc-700 text-[10px] uppercase font-bold tracking-widest text-zinc-400 rounded-lg px-2 py-1.5 w-full outline-none focus:border-blue-500 cursor-pointer">
+                    <optgroup label="Standard Cubes">
+                        <option value="333">3x3x3 Cube</option>
+                        <option value="222">2x2x2 Cube</option>
+                        <option value="444">4x4x4 Cube</option>
+                        <option value="555">5x5x5 Cube</option>
+                        <option value="666">6x6x6 Cube</option>
+                        <option value="777">7x7x7 Cube</option>
+                    </optgroup>
+                    <optgroup label="Specialized">
+                        <option value="333oh">3x3x3 One-Handed</option>
+                        <option value="pyram">Pyraminx</option>
+                    </optgroup>
+                    <optgroup label="Blindfolded">
+                        <option value="333bld">3x3x3 BLD</option>
+                        <option value="444bld">4x4x4 BLD</option>
+                        <option value="555bld">5x5x5 BLD</option>
+                    </optgroup>
+                </select>
+            </div>
+
+            <div class="p-3 bg-zinc-900/50 rounded-xl border border-zinc-700 transition-all mb-3">
+                <div id="recordsContainer" class="mb-2"></div>
+                <div id="avgContainer" class="grid grid-cols-2 gap-2 border-t border-zinc-800 pt-2.5"></div>
+                <div onclick="openAnalytics()" class="mt-2 text-[8px] text-zinc-600 text-center uppercase tracking-widest font-bold flex items-center justify-center gap-1 hover:text-blue-500 cursor-pointer transition-colors py-1">
+                    Analytics 
+                    <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </div>
+            </div>
+            
+            <div id="statsList" class="flex-grow overflow-y-auto space-y-1.5 pr-1 custom-scroll"></div>
+        </div>
+        <div class="resizer resizer-r" data-direction="r"></div>
+        <div class="resizer resizer-b" data-direction="b"></div>
+        <div class="resizer resizer-rb" data-direction="rb"></div>
+    </aside>
+
+    <div id="clickSurface" class="fixed inset-0 z-0"></div>
+
+    <script>
+        /** HOISTED UI FUNCTIONS TO PREVENT REFERENCE ERRORS **/
+        function openSettings() { document.getElementById('settingsModal').classList.remove('hidden'); }
+        function closeSettings() { localStorage.setItem('cubeTimerSettings', JSON.stringify(settings)); document.getElementById('settingsModal').classList.add('hidden'); }
+        function enterLayoutMode() { settings.editLayout = true; document.body.classList.add('editing'); document.getElementById('settingsModal').classList.add('hidden'); }
+        function exitLayoutMode() { settings.editLayout = false; document.body.classList.remove('editing'); saveLayout(); }
+
+        const timerDisplay = document.getElementById('timer');
+        const instructionDisplay = document.getElementById('instruction');
+        const scrambleDisplay = document.getElementById('scramble');
+        const visualizerHost = document.getElementById('visualizerHost');
+        const statsList = document.getElementById('statsList');
+        const avgContainer = document.getElementById('avgContainer');
+        const recordsContainer = document.getElementById('recordsContainer');
+        const clickSurface = document.getElementById('clickSurface');
+        const compTimer = document.getElementById('comp-timer');
+        const compScramble = document.getElementById('comp-scramble');
+
+        let settings = { 
+            inspectionMode: 'on', 
+            showPreview: true, 
+            sizeTimer: 96, 
+            sizePreview: 180, 
+            sizeStats: 14, 
+            editLayout: false, 
+            threshFast: 12.0, 
+            threshSlow: 25.0,
+            currentEvent: "333"
+        };
+        
+        let isRunning = false, isInspecting = false, isHolding = false;
+        let startTime, inspectionStartTime, inspectionInterval, timerInterval, holdTimeout;
+        let inspectionPenalty = ""; usedInspectionTime = 0; allSolves = []; currentScrambleText = "";
+        let trendChart = null, distChart = null;
+        let activeSolveIdx = -1, openedFromAnalytics = false;
+
+        const COLORS = { U: '#ffffff', D: '#ffff00', L: '#ff8800', R: '#ff0000', F: '#00ff00', B: '#0000ff' };
+        const PYRA_COLORS = ['#00ff00', '#ff0000', '#0000ff', '#ffff00']; 
+
+        class CubeState {
+            constructor(size = 3) { 
+                this.size = size;
+                const count = size * size;
+                this.faces = { U: Array(count).fill('U'), D: Array(count).fill('D'), L: Array(count).fill('L'), R: Array(count).fill('R'), F: Array(count).fill('F'), B: Array(count).fill('B') }; 
+            }
+            rotateFace(f) { 
+                const s = this.faces[f]; const p = [...s]; const n = this.size;
+                for (let r = 0; r < n; r++) { for (let c = 0; c < n; c++) { s[c * n + (n - 1 - r)] = p[r * n + c]; } }
+            }
+            move(m) {
+                const n = this.size;
+                const faceMatch = m.match(/[ULRFDB]/);
+                if (!faceMatch) return;
+                let f = faceMatch[0];
+                const isThreeWide = m.startsWith('3');
+                const isWide = m.includes('w');
+                const count = m.includes('2') ? 2 : (m.includes("'") ? 3 : 1); 
+                
+                for (let i = 0; i < count; i++) {
+                    if (isThreeWide) this.rotateFace(f);
+                    else if (!isWide || (isWide && !m.match(/^\d/))) this.rotateFace(f);
+
+                    let layers = [0];
+                    if (isThreeWide) layers = [0, 1, 2];
+                    else if (isWide) layers = [0, 1];
+                    
+                    layers.forEach(l => {
+                        let t = [];
+                        if (f === 'U') {
+                            for(let j=0; j<n; j++) t.push(this.faces.F[l*n+j]);
+                            for(let j=0; j<n; j++) this.faces.F[l*n+j] = this.faces.R[l*n+j];
+                            for(let j=0; j<n; j++) this.faces.R[l*n+j] = this.faces.B[l*n+j];
+                            for(let j=0; j<n; j++) this.faces.B[l*n+j] = this.faces.L[l*n+j];
+                            for(let j=0; j<n; j++) this.faces.L[l*n+j] = t[j];
+                        }
+                        else if (f === 'D') {
+                            let r = n-1-l;
+                            for(let j=0; j<n; j++) t.push(this.faces.F[r*n+j]);
+                            for(let j=0; j<n; j++) this.faces.F[r*n+j] = this.faces.L[r*n+j];
+                            for(let j=0; j<n; j++) this.faces.L[r*n+j] = this.faces.B[r*n+j];
+                            for(let j=0; j<n; j++) this.faces.B[r*n+j] = this.faces.R[r*n+j];
+                            for(let j=0; j<n; j++) this.faces.R[r*n+j] = t[j];
+                        }
+                        else if (f === 'L') {
+                            let c = l;
+                            for(let j=0; j<n; j++) t.push(this.faces.F[j*n+c]);
+                            for(let j=0; j<n; j++) this.faces.F[j*n+c] = this.faces.U[j*n+c];
+                            for(let j=0; j<n; j++) this.faces.U[j*n+c] = this.faces.B[(n-1-j)*n+(n-1-c)];
+                            for(let j=0; j<n; j++) this.faces.B[(n-1-j)*n+(n-1-c)] = this.faces.D[j*n+c];
+                            for(let j=0; j<n; j++) this.faces.D[j*n+c] = t[j];
+                        }
+                        else if (f === 'R') {
+                            let c = n-1-l;
+                            for(let j=0; j<n; j++) t.push(this.faces.F[j*n+c]);
+                            for(let j=0; j<n; j++) this.faces.F[j*n+c] = this.faces.D[j*n+c];
+                            for(let j=0; j<n; j++) this.faces.D[j*n+c] = this.faces.B[(n-1-j)*n+(n-1-c)];
+                            for(let j=0; j<n; j++) this.faces.B[(n-1-j)*n+(n-1-c)] = this.faces.U[j*n+c];
+                            for(let j=0; j<n; j++) this.faces.U[j*n+c] = t[j];
+                        }
+                        else if (f === 'F') {
+                            let d = l;
+                            for(let j=0; j<n; j++) t.push(this.faces.U[(n-1-d)*n+j]);
+                            for(let j=0; j<n; j++) this.faces.U[(n-1-d)*n+j] = this.faces.L[(n-1-j)*n+(n-1-d)];
+                            for(let j=0; j<n; j++) this.faces.L[(n-1-j)*n+(n-1-d)] = this.faces.D[d*n+(n-1-j)];
+                            for(let j=0; j<n; j++) this.faces.D[d*n+(n-1-j)] = this.faces.R[j*n+d];
+                            for(let j=0; j<n; j++) this.faces.R[j*n+d] = t[j];
+                        }
+                        else if (f === 'B') {
+                            let d = l;
+                            for(let j=0; j<n; j++) t.push(this.faces.U[d*n+j]);
+                            for(let j=0; j<n; j++) this.faces.U[d*n+j] = this.faces.R[j*n+(n-1-d)];
+                            for(let j=0; j<n; j++) this.faces.R[j*n+(n-1-d)] = this.faces.D[(n-1-d)*n+(n-1-j)];
+                            for(let j=0; j<n; j++) this.faces.D[(n-1-d)*n+(n-1-j)] = this.faces.L[(n-1-j)*n+d];
+                            for(let j=0; j<n; j++) this.faces.L[(n-1-j)*n+d] = t[j];
+                        }
+                    });
+                }
+            }
+        }
+
+        class PyraminxState {
+            constructor() {
+                this.faces = Array.from({length: 4}, (_, i) => Array(9).fill(i));
+            }
+            move(m) {
+                const type = m.charAt(0);
+                const isTip = type === type.toLowerCase();
+                const face = type.toUpperCase();
+                const count = m.includes("'") ? 2 : (m.includes("2") ? 2 : 1);
+                for (let i = 0; i < count; i++) this.applyMove(face, isTip);
+            }
+            applyMove(f, tip) {
+                if (f === 'U') {
+                    this.cycle(0,0, 1,0, 2,0);
+                    if (!tip) { this.cycle(0,1, 1,1, 2,1); this.cycle(0,2, 1,2, 2,2); this.cycle(0,3, 1,3, 2,3); }
+                } else if (f === 'L') {
+                    this.cycle(0,4, 2,8, 3,4);
+                    if (!tip) { this.cycle(0,5, 2,7, 3,6); this.cycle(0,1, 2,3, 3,5); this.cycle(0,6, 2,6, 3,7); }
+                } else if (f === 'R') {
+                    this.cycle(0,8, 3,8, 1,4);
+                    if (!tip) { this.cycle(0,7, 3,7, 1,6); this.cycle(0,3, 3,3, 1,5); this.cycle(0,6, 3,2, 1,7); }
+                } else if (f === 'B') {
+                    this.cycle(1,8, 3,0, 2,4);
+                    if (!tip) { this.cycle(1,7, 3,2, 2,6); this.cycle(1,3, 3,1, 2,5); this.cycle(1,6, 3,3, 2,7); }
+                }
+            }
+            cycle(f1,s1, f2,s2, f3,s3) {
+                let tmp = this.faces[f1][s1];
+                this.faces[f1][s1] = this.faces[f2][s2];
+                this.faces[f2][s2] = this.faces[f3][s3];
+                this.faces[f3][s3] = tmp;
+            }
+        }
+
+        function adjustScrambleFontSize() {
+            const scrambleRect = compScramble.getBoundingClientRect();
+            const timerRect = compTimer.getBoundingClientRect();
+            const h = timerRect.top - scrambleRect.top - 20; 
+            const isLong = settings.currentEvent.match(/444|555|666|777/);
+            scrambleDisplay.style.fontSize = Math.min(isLong ? 16 : 48, Math.max(10, (h / (isLong ? 8 : 4)))) + 'px';
+        }
+
+        function changeEvent(eventId) {
+            settings.currentEvent = eventId;
+            localStorage.setItem('cubeTimerSettings', JSON.stringify(settings));
+            generateScramble(); updateStats();
+            setTimeout(adjustScrambleFontSize, 0);
+        }
+
+        function generateScramble() {
+            const event = settings.currentEvent;
+            let res = [];
+            if (event === "pyram") {
+                const moves = ["U", "L", "R", "B"];
+                const tips = ["u", "l", "r", "b"];
+                const mods = ["", "'"];
+                let history = "";
+                for(let i=0; i<10; i++) {
+                    let m; do { m = moves[Math.floor(Math.random()*4)]; } while(m === history);
+                    history = m; res.push(m + mods[Math.floor(Math.random()*2)]);
+                }
+                tips.forEach(t => { const rnd = Math.floor(Math.random()*3); if(rnd === 1) res.push(t); else if(rnd === 2) res.push(t + "'"); });
+            } else {
+                let moves = ["U", "D", "L", "R", "F", "B"];
+                let length = 20;
+                if (event === "222") { moves = ["U", "R", "F"]; length = 9; } 
+                else if (event.startsWith("444")) { moves = ["U", "D", "L", "R", "F", "B", "Uw", "Rw", "Fw"]; length = 40; } 
+                else if (event.startsWith("555")) { moves = ["U", "D", "L", "R", "F", "B", "Uw", "Rw", "Fw", "Lw", "Dw", "Bw"]; length = 60; } 
+                else if (event === "666") { moves = ["U", "D", "L", "R", "F", "B", "Uw", "Rw", "Fw", "Lw", "Dw", "Bw", "3Uw", "3Rw", "3Fw"]; length = 80; }
+                else if (event === "777") { moves = ["U", "D", "L", "R", "F", "B", "Uw", "Rw", "Fw", "Lw", "Dw", "Bw", "3Uw", "3Rw", "3Fw", "3Lw", "3Dw", "3Bw"]; length = 100; }
+                const opposites = { "U":"D", "D":"U", "L":"R", "R":"L", "F":"B", "B":"F", "Uw":"D", "Rw":"L", "Fw":"B", "Lw":"R", "Dw":"U", "Bw":"F", "3Uw":"D", "3Rw":"L", "3Fw":"B", "3Lw":"R", "3Dw":"U", "3Bw":"F" };
+                const mods = ["", "'", "2"];
+                let history = [];
+                for (let i = 0; i < length; i++) {
+                    let m;
+                    while (true) {
+                        m = moves[Math.floor(Math.random() * moves.length)];
+                        let face = m.match(/[ULRFDB]/)[0];
+                        if (history.length > 0) {
+                            let lastFace = history[history.length - 1].match(/[ULRFDB]/)[0];
+                            if (face === lastFace) continue;
+                            if (history.length > 1) {
+                                let lastLastFace = history[history.length - 2].match(/[ULRFDB]/)[0];
+                                if (face === lastLastFace && opposites[face] === lastFace) continue;
+                            }
+                        }
+                        break;
+                    }
+                    history.push(m); res.push(m + mods[Math.floor(Math.random() * 3)]);
+                }
+            }
+            currentScrambleText = res.join(" ");
+            scrambleDisplay.innerText = currentScrambleText;
+            updatePreview(); setTimeout(adjustScrambleFontSize, 0);
+        }
+
+        function updatePreview() {
+            if (!settings.showPreview) { visualizerHost.style.display = 'none'; return; }
+            visualizerHost.style.display = 'flex';
+            if (settings.currentEvent === "pyram") drawPyraminx(currentScrambleText, visualizerHost, settings.sizePreview);
+            else {
+                let n = 3;
+                if (settings.currentEvent === "222") n = 2; else if (settings.currentEvent.startsWith("444")) n = 4; else if (settings.currentEvent.startsWith("555")) n = 5; else if (settings.currentEvent === "666") n = 6; else if (settings.currentEvent === "777") n = 7;
+                drawCube(currentScrambleText, visualizerHost, settings.sizePreview, n);
+            }
+        }
+
+        function drawPyraminx(scramble, host, size) {
+            host.innerHTML = '';
+            const pyra = new PyraminxState();
+            scramble.split(' ').forEach(m => m && pyra.move(m));
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("width", size); svg.setAttribute("height", size);
+            svg.setAttribute("viewBox", "0 0 300 300");
+            const tri = (x, y, s, inv) => inv ? `${x},${y} ${x+s},${y} ${x+s/2},${y+s*0.866}` : `${x+s/2},${y} ${x},${y+s*0.866} ${x+s},${y+s*0.866}`;
+            const unit = 50; const h = unit * 0.866;
+            const getFaceLayout = (offsetX, offsetY, scale = 1) => [
+                {x: offsetX + 50*scale, y: offsetY, s: 50*scale, inv: false},
+                {x: offsetX + 25*scale, y: offsetY + h*scale, s: 50*scale, inv: false},
+                {x: offsetX + 50*scale, y: offsetY + h*scale, s: 50*scale, inv: true},
+                {x: offsetX + 75*scale, y: offsetY + h*scale, s: 50*scale, inv: false},
+                {x: offsetX, y: offsetY + 2*h*scale, s: 50*scale, inv: false},
+                {x: offsetX + 25*scale, y: offsetY + 2*h*scale, s: 50*scale, inv: true},
+                {x: offsetX + 50*scale, y: offsetY + 2*h*scale, s: 50*scale, inv: false},
+                {x: offsetX + 75*scale, y: offsetY + 2*h*scale, s: 50*scale, inv: true},
+                {x: offsetX + 100*scale, y: offsetY + 2*h*scale, s: 50*scale, inv: false}
+            ];
+            const faceConfigs = [{id: 0, ox: 75, oy: 65, s: 1}, {id: 1, ox: 150, oy: 195, s: 1}, {id: 2, ox: 0, oy: 195, s: 1}, {id: 3, ox: 75, oy: 195, s: 1, inv: true}];
+            faceConfigs.forEach(conf => {
+                const layout = getFaceLayout(conf.ox, conf.oy, conf.s);
+                layout.forEach((l, i) => {
+                    const p = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    p.setAttribute("points", tri(l.x, l.y, l.s, conf.inv ? !l.inv : l.inv));
+                    p.setAttribute("fill", PYRA_COLORS[pyra.faces[conf.id][i]]);
+                    p.setAttribute("stroke", "#111"); p.setAttribute("stroke-width", "1.5");
+                    svg.appendChild(p);
+                });
+            });
+            host.appendChild(svg);
+        }
+
+        function drawCube(scramble, host, size, n = 3) {
+            host.innerHTML = ''; const cube = new CubeState(n); scramble.split(' ').forEach(m => { if(m) cube.move(m); });
+            const grid = document.createElement('div'); grid.style.display = 'grid'; grid.style.gridTemplateColumns = 'repeat(4, 1fr)'; grid.style.gridTemplateRows = 'repeat(3, 1fr)'; grid.style.gap = (size/60) + 'px'; grid.style.width = size + 'px';
+            const layout = { 'U':[1,2], 'L':[2,1], 'F':[2,2], 'R':[2,3], 'B':[2,4], 'D':[3,2] };
+            Object.entries(layout).forEach(([f, pos]) => {
+                const face = document.createElement('div'); face.className = 'face'; face.style.gridArea = `${pos[0]} / ${pos[1]}`; face.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+                cube.faces[f].forEach(c => { const s = document.createElement('div'); s.className = 'sticker'; s.style.backgroundColor = COLORS[c]; face.appendChild(s); });
+                grid.appendChild(face);
+            });
+            host.appendChild(grid);
+        }
+
+        function triggerStart() {
+            if (settings.editLayout || isRunning) { if(isRunning) stopTimer(); return; }
+            if (isInspecting) {
+                isHolding = true; timerDisplay.classList.remove('ready', 'inspecting', 'penalty'); timerDisplay.classList.add('holding');
+                holdTimeout = setTimeout(() => { if (isHolding) { timerDisplay.classList.remove('holding'); timerDisplay.classList.add('ready'); } }, 400);
+            } else {
+                const isBLD = settings.currentEvent.endsWith('bld');
+                if (settings.inspectionMode === 'on' && !isBLD) startInspection();
+                else { 
+                    isHolding = true; timerDisplay.classList.add('holding'); 
+                    holdTimeout = setTimeout(() => { if (isHolding) { timerDisplay.classList.remove('holding'); timerDisplay.classList.add('ready'); } }, 400); 
+                }
+            }
+        }
+
+        function triggerEnd() {
+            if (isHolding) {
+                clearTimeout(holdTimeout);
+                if (timerDisplay.classList.contains('ready')) {
+                    if (isInspecting) { usedInspectionTime = (Date.now() - inspectionStartTime) / 1000; clearInterval(inspectionInterval); isInspecting = false; }
+                    startTimer();
+                } else if (!isInspecting) { timerDisplay.innerText = "0.000"; }
+                timerDisplay.classList.remove('holding', 'ready'); isHolding = false;
+            }
+        }
+
+        function startInspection() {
+            isInspecting = true; inspectionStartTime = Date.now(); inspectionPenalty = ""; usedInspectionTime = 0;
+            timerDisplay.classList.remove('holding', 'ready', 'penalty'); timerDisplay.classList.add('inspecting'); instructionDisplay.innerText = "Inspecting...";
+            inspectionInterval = setInterval(() => {
+                let elapsed = (Date.now() - inspectionStartTime)/1000;
+                if (elapsed >= 17) { timerDisplay.innerText = "DNF"; inspectionPenalty = "DNF"; timerDisplay.classList.add('penalty'); }
+                else if (elapsed >= 15) { timerDisplay.innerText = Math.max(0, Math.ceil(17 - elapsed)); inspectionPenalty = "+2"; timerDisplay.classList.add('penalty'); }
+                else { timerDisplay.innerText = Math.ceil(15 - elapsed); }
+            }, 50);
+        }
+
+        function startTimer() {
+            isRunning = true; startTime = Date.now();
+            scrambleDisplay.parentElement.style.opacity = "0.05"; 
+            if (settings.currentEvent.endsWith('bld')) visualizerHost.parentElement.style.opacity = "0";
+            timerDisplay.classList.remove('inspecting', 'ready', 'holding', 'penalty'); 
+            instructionDisplay.innerText = settings.currentEvent.endsWith('bld') ? "Memorizing / Solving..." : "Solving...";
+            timerInterval = setInterval(() => { let t = (Date.now() - startTime)/1000; timerDisplay.innerText = t.toFixed(3) + (inspectionPenalty === "+2" ? "+" : ""); }, 10);
+        }
+
+        function stopTimer() {
+            isRunning = false; clearInterval(timerInterval);
+            scrambleDisplay.parentElement.style.opacity = "1"; visualizerHost.parentElement.style.opacity = "1";
+            let finalTimeRaw = timerDisplay.innerText; if (inspectionPenalty === "DNF") finalTimeRaw = "DNF";
+            const val = parseFloat(finalTimeRaw);
+            if (!isNaN(val)) {
+                timerDisplay.classList.remove('animate-fast', 'animate-slow', 'animate-mid'); void timerDisplay.offsetWidth;
+                if (val <= settings.threshFast) timerDisplay.classList.add('animate-fast'); else if (val >= settings.threshSlow) timerDisplay.classList.add('animate-slow'); else timerDisplay.classList.add('animate-mid');
+            }
+            allSolves.unshift({ id: Date.now(), time: finalTimeRaw, scramble: currentScrambleText, event: settings.currentEvent, inspection: inspectionPenalty || "OK", usedInspection: usedInspectionTime, date: new Date().toLocaleString(), note: "" });
+            localStorage.setItem('cubeSolves', JSON.stringify(allSolves));
+            updateStats(); generateScramble(); updateInstructionText();
+        }
+
+        function openImmersive(idx, fromAnalytics = false) {
+            activeSolveIdx = idx; openedFromAnalytics = fromAnalytics;
+            const s = allSolves[idx]; if (!s) return;
+            document.getElementById('immTime').innerText = s.time; document.getElementById('immDate').innerText = s.date; document.getElementById('immScramble').innerText = s.scramble; document.getElementById('immNote').value = s.note || "";
+            document.getElementById('immInsp').innerText = s.inspection !== "OK" ? `Inspection: ${s.inspection} (${s.usedInspection.toFixed(1)}s)` : `Clean Inspection (${s.usedInspection.toFixed(1)}s)`;
+            if (s.event === "pyram") drawPyraminx(s.scramble, document.getElementById('immVisualizer'), 260);
+            else {
+                let n = 3;
+                if (s.event.startsWith("222")) n = 2; else if (s.event.startsWith("444")) n = 4; else if (s.event.startsWith("555")) n = 5; else if (s.event.startsWith("666")) n = 6; else if (s.event.startsWith("777")) n = 7;
+                drawCube(s.scramble, document.getElementById('immVisualizer'), 260, n);
+            }
+            if (fromAnalytics) { document.getElementById('analyticsModal').style.opacity = "0"; document.getElementById('analyticsModal').style.pointerEvents = "none"; }
+            document.getElementById('immersiveDetail').classList.remove('hidden');
+        }
+
+        function closeImmersive() { document.getElementById('immersiveDetail').classList.add('hidden'); if (openedFromAnalytics) { document.getElementById('analyticsModal').style.opacity = "1"; document.getElementById('analyticsModal').style.pointerEvents = "auto"; } openedFromAnalytics = false; }
+        function saveCurrentNote() { if (activeSolveIdx > -1) { allSolves[activeSolveIdx].note = document.getElementById('immNote').value; localStorage.setItem('cubeSolves', JSON.stringify(allSolves)); } }
+        function updateInstructionText() { const isBLD = settings.currentEvent.endsWith('bld'); instructionDisplay.innerText = (settings.inspectionMode === 'on' && !isBLD) ? "Space to Inspect" : "Space to Solve"; }
+        
+        function getMetricData(type, count, offset = 0) {
+            const eventSolves = allSolves.filter(s => s.event === settings.currentEvent);
+            if (eventSolves.length < count + offset) return { value: "--", solves: [] };
+            const subsetIndices = Array.from({length: count}, (_, i) => offset + i);
+            const subsetValues = subsetIndices.map(i => { const s = eventSolves[i]; if (s.time === "DNF") return Infinity; return parseFloat(s.time) + (s.time.endsWith('+') ? 2 : 0); });
+            if (type === 'Ao') { const sorted = [...subsetValues].sort((a,b) => a - b); const res = sorted.slice(1, -1).reduce((a,b) => a + b, 0) / (count - 2); return { value: isFinite(res) ? res.toFixed(3) : "DNF", solves: subsetIndices }; }
+            return { value: "--" };
+        }
+        
+        function findBestEver(type, count) {
+            const eventSolves = allSolves.filter(s => s.event === settings.currentEvent);
+            if (eventSolves.length < count) return { value: "--" };
+            let bestVal = Infinity;
+            for (let i = 0; i <= eventSolves.length - count; i++) { const data = getMetricData('Ao', count, i); if (data.value !== "--" && data.value !== "DNF") { const val = parseFloat(data.value); if (val < bestVal) bestVal = val; } }
+            return { value: bestVal === Infinity ? "DNF" : bestVal.toFixed(3) };
+        }
+
+        function updateStats() {
+            const eventSolves = allSolves.filter(s => s.event === settings.currentEvent);
+            statsList.innerHTML = eventSolves.map((s) => {
+                const originalIdx = allSolves.findIndex(orig => orig.id === s.id);
+                const pos = eventSolves.length - eventSolves.indexOf(s);
+                return `<div onclick="openImmersive(${originalIdx})" class="flex justify-between items-center p-2.5 bg-zinc-800/40 rounded-lg border border-zinc-700/30 cursor-pointer hover:bg-zinc-700 font-mono transition-colors">
+                    <span class="text-zinc-600 text-[10px] w-6 font-bold" style="font-size: ${Math.max(8, settings.sizeStats - 4)}px">#${pos}</span>
+                    <div class="flex-grow"><b class="${s.time === 'DNF' ? 'text-red-400' : 'text-zinc-100'}" style="font-size: ${settings.sizeStats}px">${s.time}</b></div>
+                </div>`}).join('');
+            avgContainer.innerHTML = ''; 
+            let bestSingleIdx = -1, minSingleVal = Infinity;
+            eventSolves.forEach((s) => { if (s.time === "DNF") return; let v = parseFloat(s.time) + (s.time.endsWith('+') ? 2 : 0); if (v < minSingleVal) { minSingleVal = v; bestSingleIdx = allSolves.findIndex(orig => orig.id === s.id); } });
+            const recordFontSize = Math.max(10, settings.sizeStats - 2);
+            recordsContainer.innerHTML = `<div onclick="openImmersive(${bestSingleIdx})" class="font-mono text-zinc-500 cursor-pointer hover:bg-zinc-900 p-2 border border-zinc-800 rounded-lg flex justify-between items-center" style="font-size: ${recordFontSize}px"><span>PB:</span> <span class="text-blue-400 font-bold">${bestSingleIdx !== -1 ? minSingleVal.toFixed(3) : "--"}</span></div>`;
+            [5, 12].forEach(n => {
+                const currentData = getMetricData('Ao', n); const bestData = findBestEver('Ao', n);
+                const div = document.createElement('div'); div.className = "flex flex-col p-2 bg-zinc-900/30 rounded-lg border border-zinc-800/50 cursor-pointer hover:border-blue-500 transition-colors";
+                div.innerHTML = `<div class="text-zinc-600 font-bold mb-0.5 uppercase tracking-tighter" style="font-size: ${Math.max(8, recordFontSize - 2)}px">Ao${n}</div><div class="flex justify-between font-mono" style="font-size: ${recordFontSize}px"><span class="text-white font-bold">${currentData.value}</span><span class="text-green-500 font-bold">${bestData.value}</span></div>`;
+                div.onclick = () => openAnalytics(n); avgContainer.appendChild(div);
+            });
+            document.getElementById('skillStatus').innerText = eventSolves.length < 5 ? "CALIBRATING" : "ADAPTIVE";
+        }
+
+        function openAnalytics(filterSize = null) {
+            const eventSolves = allSolves.filter(s => s.event === settings.currentEvent);
+            if (eventSolves.length === 0) return; 
+            document.getElementById('analyticsModal').classList.remove('hidden');
+            const targetData = filterSize ? eventSolves.slice(0, filterSize) : eventSolves;
+            document.getElementById('analyticsSubtitle').innerText = filterSize ? `Latest ${filterSize} solves analysis` : `Full session analysis`;
+            const chronoTimes = [...targetData].reverse().map(s => s.time === 'DNF' ? null : parseFloat(s.time) + (s.time.endsWith('+') ? 2 : 0));
+            if (trendChart) trendChart.destroy();
+            trendChart = new Chart(document.getElementById('trendChart'), {
+                type: 'line', data: { labels: chronoTimes.map((_,i)=>i+1), datasets: [{ data: chronoTimes, borderColor: '#3b82f6', borderWidth: 1.5, fill: true, tension: 0.3, pointRadius: 1.5, spanGaps: true }] },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { grid: { color: '#27272a' }, ticks: { color: '#71717a', font: { size: 8 } } }, x: { grid: { display: false }, ticks: { color: '#3f3f46', font: { size: 7 } } } }, plugins: { legend: { display: false } } }
+            });
+            const validSolves = targetData.filter(s => s.time !== 'DNF').map(s => parseFloat(s.time) + (s.time.endsWith('+') ? 2 : 0));
+            const maxVal = validSolves.length > 0 ? Math.max(...validSolves) : 10;
+            const labels = []; const dataCounts = [];
+            for(let i = 0; i < Math.ceil(maxVal); i++) { labels.push(`${i}-${i+1}s`); dataCounts.push(validSolves.filter(v => v >= i && v < i + 1).length); }
+            labels.push('DNF'); dataCounts.push(targetData.filter(s => s.time === 'DNF').length);
+            if (distChart) distChart.destroy();
+            distChart = new Chart(document.getElementById('distChart'), {
+                type: 'doughnut', data: { labels: labels, datasets: [{ data: dataCounts, backgroundColor: ['#4ade80','#60a5fa','#facc15','#fb923c','#f87171','#a78bfa','#2dd4bf','#fb7185','#818cf8','#34d399','#f472b6','#fbbf24','#52525b','#27272a'], borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { display: false } } }
+            });
+            document.getElementById('modalSolveList').innerHTML = targetData.map((s) => {
+                const originalIdx = allSolves.findIndex(orig => orig.id === s.id);
+                return `<div onclick="openImmersive(${originalIdx}, true)" class="flex justify-between items-center p-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50 cursor-pointer hover:bg-zinc-700 font-mono transition-colors text-xs">
+                    <b class="${s.time === 'DNF' ? 'text-red-400' : 'text-blue-400'}">${s.time}</b><span class="text-zinc-500 text-[8px]">${s.date}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function closeAnalytics() { document.getElementById('analyticsModal').classList.add('hidden'); }
+        function validateThresholds() { settings.threshFast = parseFloat(document.getElementById('threshFast').value); settings.threshSlow = parseFloat(document.getElementById('threshSlow').value); document.getElementById('valFast').innerText = settings.threshFast; document.getElementById('valSlow').innerText = settings.threshSlow; }
+        function liveResize() { settings.showPreview = document.getElementById('settingPreview').checked; settings.sizeTimer = parseInt(document.getElementById('sizeTimer').value); settings.sizeStats = parseInt(document.getElementById('sizeStats').value); settings.sizePreview = parseInt(document.getElementById('sizePreview').value); settings.inspectionMode = document.getElementById('settingInspectionMode').value; timerDisplay.style.fontSize = settings.sizeTimer + 'px'; updateInstructionText(); updatePreview(); updateStats(); adjustScrambleFontSize(); }
+        function clearAllSolves() { if (confirm("Clear session for this event?")) { allSolves = allSolves.filter(s => s.event !== settings.currentEvent); localStorage.setItem('cubeSolves', JSON.stringify(allSolves)); updateStats(); } }
+        function resetLayout() { if (confirm("Reset layout?")) { localStorage.removeItem('cubeTimerLayout'); window.location.reload(); } }
+
+        let activeEl = null, offsetPoint = { x: 0, y: 0 }, resizing = null;
+        document.querySelectorAll('.draggable').forEach(el => { el.addEventListener('mousedown', e => { if (!settings.editLayout) return; if (e.target.classList.contains('resizer')) { resizing = { el, dir: e.target.dataset.direction, startX: e.clientX, startY: e.clientY, startW: el.offsetWidth, startH: el.offsetHeight }; e.stopPropagation(); return; } activeEl = el; const r = el.getBoundingClientRect(); offsetPoint.x = e.clientX - r.left; offsetPoint.y = e.clientY - r.top; el.style.transform = 'none'; }); });
+        window.addEventListener('mousemove', e => { if (activeEl) { activeEl.style.left = (e.clientX - offsetPoint.x) + 'px'; activeEl.style.top = (e.clientY - offsetPoint.y) + 'px'; activeEl.style.bottom = 'auto'; activeEl.style.right = 'auto'; if (activeEl.id === 'comp-timer') adjustScrambleFontSize(); } else if (resizing) { const { el, dir, startX, startY, startW, startH } = resizing; if (dir.includes('r')) el.style.width = (startW + (e.clientX - startX)) + 'px'; if (dir.includes('b')) el.style.height = (startH + (e.clientY - startY)) + 'px'; } });
+        window.addEventListener('mouseup', () => { if (activeEl || resizing) saveLayout(); activeEl = null; resizing = null; });
+        function saveLayout() { const layout = {}; document.querySelectorAll('.draggable').forEach(el => { layout[el.id] = { top: el.style.top, left: el.style.left, right: el.style.right, bottom: el.style.bottom, width: el.style.width, height: el.style.height }; }); localStorage.setItem('cubeTimerLayout', JSON.stringify(layout)); }
+        function loadAll() { 
+            const l = JSON.parse(localStorage.getItem('cubeTimerLayout')); if (l) Object.keys(l).forEach(id => { const el = document.getElementById(id); if (el) { el.style.top = l[id].top; el.style.left = l[id].left; el.style.right = l[id].right; el.style.bottom = l[id].bottom; if (l[id].width) el.style.width = l[id].width; if (l[id].height) el.style.height = l[id].height; el.style.transform = 'none'; } }); 
+            const s = JSON.parse(localStorage.getItem('cubeTimerSettings')); if (s) { settings = { ...settings, ...s }; document.getElementById('eventSelector').value = settings.currentEvent; }
+            const saved = JSON.parse(localStorage.getItem('cubeSolves')); if (saved) allSolves = saved;
+            liveResize(); 
+        }
+        window.addEventListener('keydown', e => { if(e.code === 'Space' && !e.repeat && !settings.editLayout && !document.querySelector('.modal-backdrop:not(.hidden)')) { e.preventDefault(); triggerStart(); } });
+        window.addEventListener('keyup', e => { if(e.code === 'Space') { e.preventDefault(); triggerEnd(); }});
+        clickSurface.addEventListener('pointerdown', e => { if(!settings.editLayout && !document.querySelector('.modal-backdrop:not(.hidden)')) { e.preventDefault(); triggerStart(); }});
+        window.addEventListener('pointerup', e => { e.preventDefault(); triggerEnd(); });
+        window.addEventListener('resize', adjustScrambleFontSize);
+        loadAll(); generateScramble();
+    </script>
+</body>
+</html>
